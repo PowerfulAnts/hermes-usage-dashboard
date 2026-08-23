@@ -3,7 +3,7 @@
   "label": "Usage",
   "description": "Universal AI-usage tracker: token usage and quota windows from every local AI tool — self-extending via provider adapters",
   "icon": "Puzzle",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "tab": {
     "path": "/usage-dashboard",
     "position": "end",
