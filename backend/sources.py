@@ -52,6 +52,7 @@ import glob
 import importlib.util
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -195,6 +196,60 @@ def cached_scan(name: str, days: int, fn, *args):
     return result
 
 
+# ------------------------------------------------- background scan jobs ----
+# A cold heavy scan can take 30s+ (GBs of rollouts). Running it inside the
+# HTTP request blows past the desktop REST door's 15s default timeout and the
+# user sees "Usage data unavailable". Instead /summary serves whatever is
+# cached RIGHT NOW (empty-but-valid when nothing is cached yet) and kicks the
+# real work into a daemon thread; the UI's 20s poll picks up the finished
+# data one or two polls later. Kicking off is cheap: a changed fingerprint
+# schedules at most ONE rescan per adapter.
+
+_scan_threads: dict[tuple, "threading.Thread"] = {}
+_scan_lock = threading.Lock()
+
+
+def ensure_scan_scheduled(name: str, days: int, mod) -> None:
+    """Start a background scan for (name, days) unless one is already running."""
+    key = (name, days)
+    with _scan_lock:
+        t = _scan_threads.get(key)
+        if t is not None and t.is_alive():
+            return
+
+        def run():
+            try:
+                cached_scan(name, days, mod.scan)
+            except Exception:
+                pass  # adapters never raise; belt & braces for thread safety
+            finally:
+                with _scan_lock:
+                    t = _scan_threads.pop(key, None)
+
+        th = threading.Thread(target=run, name=f"usage-scan-{name}-{days}",
+                              daemon=True)
+        _scan_threads[key] = th
+        th.start()
+
+
+def needs_rescan(name: str, days: int) -> bool:
+    """True when (name, days) has no usable cached result right now."""
+    key = (name, days)
+    hit = _cache.get(key)
+    if not hit or (time.time() - hit[0]) >= _CACHE_TTL_S:
+        return True
+    fp = source_fingerprint(name)
+    return fp is not None and _fingerprints.get(key, fp) != fp
+
+
+def get_cached(name: str, days: int):
+    """The current cached result for (name, days), or None."""
+    hit = _cache.get((name, days))
+    if hit and (time.time() - hit[0]) < _CACHE_TTL_S * 4:
+        return hit[1]
+    return None
+
+
 def _meta_of(mod) -> dict:
     return {
         "label": getattr(mod, "LABEL", mod.NAME),
@@ -210,7 +265,27 @@ def list_adapters() -> list[str]:
     return sorted(discover_adapters().keys())
 
 
-def collect_all(days: int = 30, only: list[str] | None = None) -> dict:
+def _empty_unavailable(days: int, error: str) -> dict:
+    return {"available": False, "days": days,
+            "totals": {}, "daily": {}, "models": {}, "meta": {},
+            "error": error}
+
+
+def collect_all(days: int = 30, only: list[str] | None = None,
+                background: bool = False) -> dict:
+    """Collect every adapter's usage picture.
+
+    With ``background=True`` (the API path) this NEVER runs a heavy scan
+    inline: each adapter returns its cached result when fresh (or a recent
+    one while a rescan is pending), and stale/missing adapters get their
+    scan scheduled on a daemon thread. The response is therefore always
+    fast; the UI's next poll picks up freshly scanned data. Cheap adapters
+    (no fingerprint) are still allowed to run inline — they're the sqlite
+    aggregate + tiny JSONL readers that finish in milliseconds.
+
+    ``background=False`` keeps the old synchronous behavior for tests and
+    tools/smoke_local.py.
+    """
     global _adapter_by_name
     mods = discover_adapters()
     _adapter_by_name = dict(mods)  # fingerprints resolve through this map
@@ -220,13 +295,30 @@ def collect_all(days: int = 30, only: list[str] | None = None) -> dict:
         if name not in wanted:
             continue
         try:
-            res = cached_scan(name, days, mod.scan)
+            if background and hasattr(mod, "fingerprint"):
+                # Heavy scanner: never scan inline. Serve the freshest cached
+                # result (even a slightly-stale one while a rescan runs) and
+                # make sure exactly one background job is working on fresh data.
+                if needs_rescan(name, days):
+                    ensure_scan_scheduled(name, days, mod)
+                    res = get_cached(name, days)
+                    if res is None:
+                        res = _empty_unavailable(
+                            days,
+                            "scanning in background — first results land within ~30s")
+                        res["meta"]["scanning"] = True
+                else:
+                    res = get_cached(name, days)
+            else:
+                res = cached_scan(name, days, mod.scan)
+            if res is None:
+                res = _empty_unavailable(days, "no cached result")
         except Exception as exc:  # belt & braces: adapters shouldn't raise
-            res = {"available": False, "days": days,
-                   "totals": {}, "daily": {}, "models": {}, "meta": {},
-                   "error": repr(exc)[:200]}
+            res = _empty_unavailable(days, repr(exc)[:200])
         res.setdefault("days", days)
         res.setdefault("meta", {})
+        res["meta"]["stale"] = bool(res.get("meta", {}).get("stale")) or (
+            background and needs_rescan(name, days))
         # embed display meta so the UI needs no hardcoded provider lists
         res["meta"]["label"] = getattr(mod, "LABEL", name)
         res["meta"]["badge"] = getattr(mod, "BADGE", None)

@@ -709,6 +709,13 @@ function UsagePage() {
         .filter(Boolean)
     : [];
 
+  // True while the backend is still reading heavy providers off disk
+  // (first open after a restart, or a fresh window). Not an error — the
+  // numbers simply haven't landed yet; the poll picks them up.
+  const anyScanning = sources
+    ? Object.values(sources).some((s) => s && s.meta && s.meta.scanning)
+    : false;
+
   return jsxs('div', {
     className: 'mx-auto flex w-full max-w-4xl flex-col gap-7 px-6 pb-14 pt-6',
     children: [
@@ -756,6 +763,21 @@ function UsagePage() {
               jsx('div', {
                 className: 'mt-4 flex justify-center',
                 children: jsx(Button, { size: 'xs', onClick: onRefresh, children: 'Retry now' })
+              })
+            ]
+          })
+        : null,
+
+      // First-run scan in progress (backend answered fine — heavy providers
+      // are still being read off disk). Show skeletons, not an error.
+      !error && data && anyScanning
+        ? jsxs('div', {
+            className: 'flex items-center gap-2.5 rounded-xl border border-(--ui-stroke-secondary) px-4 py-3',
+            children: [
+              jsx(GlyphSpinner, { className: 'text-(--ui-text-quaternary)', ariaLabel: 'Scanning usage' }),
+              jsx('div', {
+                className: 'text-xs text-(--ui-text-tertiary)',
+                children: 'Reading local usage history — first numbers land within ~30s.'
               })
             ]
           })

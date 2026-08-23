@@ -85,6 +85,18 @@ def test_summary_contract(synthetic_home):
     assert "generated_at" in data
     assert isinstance(data["sources"], dict)
 
+    # The API path runs with background=True: heavy adapters may answer
+    # "scanning" on the very first call and land their numbers one poll
+    # later. Wait for the background scans to finish, then re-fetch.
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        codex = data["sources"].get("codex") or {}
+        hermes = data["sources"].get("hermes") or {}
+        if codex.get("available") and hermes.get("available"):
+            break
+        time.sleep(1)
+        data = _summary(7)
+
     # codex parsed the synthetic rollout: 100 in (cached 10 already inside
     # input, OpenAI-style), 50 out + 5 reasoning → 155 total
     codex = data["sources"].get("codex")

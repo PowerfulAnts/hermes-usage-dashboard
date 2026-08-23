@@ -54,10 +54,15 @@ def _portal_model() -> dict[str, Any]:
 
 @router.get("/summary")
 async def summary(days: int = Query(30, ge=1, le=365)) -> dict[str, Any]:
-    """Universal usage: every discovered provider source, combined + limits."""
+    """Universal usage: every discovered provider source, combined + limits.
+
+    Runs with background=True: heavy adapters are served from cache and
+    rescanned off-thread, so this endpoint always answers in well under the
+    desktop REST timeout. The UI's 20s poll converges on fresh data.
+    """
     import sources
 
-    data = sources.collect_all(days=days)
+    data = sources.collect_all(days=days, background=True)
     portal_model = _portal_model()
     data["portal"] = portal_model
     limits = sources.collect_limits(portal_model)
