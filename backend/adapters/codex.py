@@ -28,6 +28,34 @@ COMBINED_PRIORITY = 100
 
 
 
+def fingerprint(days: int = 30):
+    """(max mtime, total bytes) over in-window rollout files — cheap.
+
+    A running Codex session appends to its rollout every few seconds, so a
+    changed fingerprint invalidates the TTL cache immediately and the next
+    /summary rescans. mtime granularity on NTFS is ~100ns, FAT 2s — either
+    is far finer than the 20s UI poll.
+    """
+    try:
+        files = recent_files(
+            [os.path.join(home(), ".codex", "sessions", "**", "*.jsonl"),
+             os.path.join(home(), ".codex", "archived_sessions", "*.jsonl")],
+            days, recursive=True)
+    except Exception:
+        return None
+    latest = 0.0
+    total = 0
+    for path in files:
+        try:
+            st = os.stat(path)
+            if st.st_mtime > latest:
+                latest = st.st_mtime
+            total += st.st_size
+        except OSError:
+            continue
+    return (latest, total) if files else None
+
+
 def scan(days: int = 30) -> dict:
     res = sources.empty_result(days)
     codex_dir = os.path.join(home(), ".codex")

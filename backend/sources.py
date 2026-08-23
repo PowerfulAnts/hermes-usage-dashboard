@@ -136,26 +136,62 @@ def discover_adapters(adapters_dir: str | None = None) -> dict:
     if errors:
         global REGISTRY_ERRORS
         REGISTRY_ERRORS = errors
+    global _adapter_by_name
+    _adapter_by_name = dict(found)
     return found
 
 
 REGISTRY_ERRORS: list[dict] = []
+_adapter_by_name: dict[str, object] = {}
 
 
 # ---------------------------------------------------------------- cache ----
 
 _CACHE_TTL_S = 300.0
 _cache: dict[tuple, tuple[float, dict]] = {}
+_fingerprints: dict[tuple, object] = {}
+
+
+def source_fingerprint(name: str):
+    """Cheap change-signal for an adapter's input files (None = unknown).
+
+    Adapters may define ``fingerprint()`` returning anything comparable
+    (e.g. (max mtime, total size) over their source files). When the value
+    CHANGES, a cached scan is invalidated immediately instead of waiting out
+    the TTL — that is what makes an active Codex session show up within one
+    UI poll instead of up to 5 minutes later. Same value → cached result is
+    still fresh regardless of age.
+    """
+    mod = _adapter_by_name.get(name)
+    fn = getattr(mod, "fingerprint", None) if mod else None
+    if fn is None:
+        return None
+    try:
+        return fn()
+    except Exception:
+        return None
 
 
 def cached_scan(name: str, days: int, fn, *args):
-    """Memoize heavy scans for 5 min (files are append-only → safe window)."""
+    """Memoize heavy scans for 5 min — but invalidate early on file changes.
+
+    Files are append-only in practice, so within an unchanged fingerprint the
+    TTL cache can never be stale beyond the current partial day. The moment
+    the adapter's fingerprint() reports different inputs, the cache is
+    dropped and rescanned: active sessions appear on the next poll (~20s)
+    rather than after the full TTL.
+    """
     key = (name, days)
+    fp = source_fingerprint(name)
     hit = _cache.get(key)
     if hit and (time.time() - hit[0]) < _CACHE_TTL_S:
-        return hit[1]
+        if fp is None or _fingerprints.get(key, fp) == fp:
+            return hit[1]
+        del _cache[key]  # inputs changed → rescan now
     result = fn(days, *args) if args else fn(days)
     _cache[key] = (time.time(), result)
+    if fp is not None:
+        _fingerprints[key] = fp
     return result
 
 
@@ -175,7 +211,9 @@ def list_adapters() -> list[str]:
 
 
 def collect_all(days: int = 30, only: list[str] | None = None) -> dict:
+    global _adapter_by_name
     mods = discover_adapters()
+    _adapter_by_name = dict(mods)  # fingerprints resolve through this map
     wanted = set(only) if only else set(mods.keys())
     out = {"generated_at": datetime.now(timezone.utc).isoformat(), "sources": {}}
     for name, mod in sorted(mods.items(), key=lambda kv: (getattr(kv[1], "ORDER", 100), kv[0])):

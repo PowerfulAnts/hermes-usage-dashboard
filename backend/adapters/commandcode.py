@@ -22,6 +22,26 @@ BADGE = "Go plan"
 ORDER = 30
 
 
+def fingerprint(days: int = 30):
+    """(max mtime, total bytes) over in-window session files — cheap."""
+    try:
+        files = recent_files(
+            [os.path.join(home(), ".commandcode", "projects", "*", "*.jsonl")],
+            days)
+    except Exception:
+        return None
+    latest = 0.0
+    total = 0
+    for path in files:
+        try:
+            st = os.stat(path)
+            if st.st_mtime > latest:
+                latest = st.st_mtime
+            total += st.st_size
+        except OSError:
+            continue
+    return (latest, total) if files else None
+
 
 def scan(days: int = 30) -> dict:
     res = sources.empty_result(days)

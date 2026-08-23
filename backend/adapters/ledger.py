@@ -27,6 +27,15 @@ DEDUPE_GROUP = "codex"
 COMBINED_PRIORITY = 200
 
 
+def fingerprint(days: int = 30):
+    """(mtime, size) of the ledger file — cheap; it grows line by line."""
+    path = os.path.join(home(), ".hermes", "usage-ledger.jsonl")
+    try:
+        st = os.stat(path)
+        return (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+
 
 def scan(days: int = 30) -> dict:
     res = sources.empty_result(days)

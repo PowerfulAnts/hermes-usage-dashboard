@@ -34,6 +34,27 @@ _QUERY = """
     GROUP BY day, model, billing_provider"""
 
 
+def fingerprint(days: int = 30):
+    """(max mtime, size, row count) of the sqlite store — cheap.
+
+    The DB changes on every routed response; stat + a COUNT(*) are far
+    cheaper than re-running the aggregate query for nothing.
+    """
+    db_path = (os.path.join(home(), "AppData", "Local", "hermes", "state.db")
+               if os.name == "nt" else os.path.join(home(), ".hermes", "state.db"))
+    try:
+        st = os.stat(db_path)
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2)
+        try:
+            (rows,) = conn.execute(
+                "SELECT COUNT(*) FROM session_model_usage").fetchone()
+        finally:
+            conn.close()
+        return (st.st_mtime, st.st_size, rows)
+    except Exception:
+        return None
+
+
 def scan(days: int = 30) -> dict:
     res = sources.empty_result(days)
     db_path = os.path.join(home(), "AppData", "Local", "hermes", "state.db") \

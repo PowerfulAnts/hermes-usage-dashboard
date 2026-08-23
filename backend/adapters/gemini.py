@@ -22,6 +22,31 @@ BADGE = "Gemini CLI"
 ORDER = 20
 
 
+def fingerprint(days: int = 30):
+    """(max mtime, total bytes) over in-window chat files — cheap."""
+    chats_dir = os.path.join(home(), ".gemini", "tmp")
+    try:
+        paths = glob.glob(os.path.join(chats_dir, "*", "chats", "**", "*.jsonl"),
+                          recursive=True)
+    except Exception:
+        return None
+    cutoff_mtime = time.time() - (days + 1) * 86400
+    latest = 0.0
+    total = 0
+    seen = False
+    for path in set(paths):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if st.st_mtime < cutoff_mtime:
+            continue
+        seen = True
+        if st.st_mtime > latest:
+            latest = st.st_mtime
+        total += st.st_size
+    return (latest, total) if seen else None
+
 
 def scan(days: int = 30) -> dict:
     res = sources.empty_result(days)

@@ -681,8 +681,20 @@ function UsagePage() {
     } catch {
       /* haptics optional */
     }
-    // Same door bundled plugins use to leave a page (kanban statusbar, bots).
-    host.navigate('/');
+    // Return to the chat that was open before this page. Navigating to '/'
+    // would create a NEW-CHAT DRAFT and clobber the leftmost session pane
+    // ('/' IS the new-chat route). The host keeps the last-focused session
+    // selected while a plugin page is showing, so route back to it; fall
+    // back to '/' only when no session is open at all.
+    const prev =
+      host.state && host.state.focusedStoredSessionId && typeof host.state.focusedStoredSessionId.get === 'function'
+        ? host.state.focusedStoredSessionId.get()
+        : null;
+    if (prev) {
+      host.navigate('/' + encodeURIComponent(String(prev)));
+    } else {
+      host.navigate('/');
+    }
   }, []);
 
   const portal = data && data.portal;
