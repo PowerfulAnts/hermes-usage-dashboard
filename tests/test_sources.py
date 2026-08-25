@@ -43,14 +43,16 @@ class HermesDatabaseContractTests(unittest.TestCase):
                     billing_provider TEXT, input_tokens INTEGER,
                     output_tokens INTEGER, cache_read_tokens INTEGER,
                     cache_write_tokens INTEGER, reasoning_tokens INTEGER,
-                    api_call_count INTEGER, last_seen REAL
+                    api_call_count INTEGER, estimated_cost_usd REAL DEFAULT 0,
+                    actual_cost_usd REAL DEFAULT 0, last_seen REAL
                 )
             """)
             conn.executemany(
-                "INSERT INTO session_model_usage VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO session_model_usage VALUES (?,?,?,?,?,?,?,?,?,?)",
                 [
-                    ("nous", 600, 100, 300, 100, 20, 2, time.time()),
-                    ("openrouter", 50, 10, 0, 0, 0, 1, time.time()),
+                    ("nous", 600, 100, 300, 100, 20, 2, 0.0, 0.0, time.time()),
+                    ("surplusintelligence", 50, 10, 0, 0, 0, 1, 0.0125, 0.02, time.time()),
+                    ("openrouter", 50, 10, 0, 0, 0, 1, 0.0, 0.0, time.time()),
                 ],
             )
             conn.commit()
@@ -60,9 +62,23 @@ class HermesDatabaseContractTests(unittest.TestCase):
                 result = sources.collect(days=1)
 
         self.assertEqual(result["meta"]["scope"], "hermes-only")
-        self.assertEqual(set(result["providers"]), {"nous", "openrouter"})
+        # Unknown providers (e.g. surplusintelligence) group automatically.
+        self.assertEqual(set(result["providers"]), {"nous", "surplusintelligence", "openrouter"})
         self.assertEqual(result["providers"]["nous"]["hit_rate_pct"], 30.0)
         self.assertEqual(result["providers"]["openrouter"]["hit_rate_pct"], 0.0)
+        self.assertEqual(result["providers"]["surplusintelligence"]["cost_usd"], 0.02)
+
+
+class CostAggregationTests(unittest.TestCase):
+    def test_actual_cost_wins_over_estimate(self):
+        bucket = sources._bucket()
+        sources._bump(bucket, 10, 2, 0, 0, 0, 1, est_cost=1.0, act_cost=3.5)
+        self.assertEqual(bucket["cost_usd"], 3.5)
+
+    def test_estimated_used_when_no_actual(self):
+        bucket = sources._bucket()
+        sources._bump(bucket, 10, 2, 0, 0, 0, 1, est_cost=0.25, act_cost=0.0)
+        self.assertEqual(bucket["cost_usd"], 0.25)
 
 
 class LimitParserTests(unittest.TestCase):

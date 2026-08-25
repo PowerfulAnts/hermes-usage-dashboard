@@ -52,6 +52,7 @@ _EMPTY_BUCKET = {
     "cache_write": 0,
     "total": 0,
     "api_calls": 0,
+    "cost_usd": 0.0,
 }
 
 QUERY = """
@@ -59,7 +60,8 @@ QUERY = """
            billing_provider,
            SUM(input_tokens), SUM(output_tokens),
            SUM(cache_read_tokens), SUM(cache_write_tokens),
-           SUM(reasoning_tokens), SUM(api_call_count)
+           SUM(reasoning_tokens), SUM(api_call_count),
+           SUM(estimated_cost_usd), SUM(actual_cost_usd)
     FROM session_model_usage
     WHERE last_seen > ?
     GROUP BY day, billing_provider"""
@@ -79,7 +81,8 @@ def _bucket() -> dict:
 
 
 def _bump(bucket: dict, inp: int, outp: int, cach_read: int, cach_write: int,
-          reason: int, calls: int) -> None:
+          reason: int, calls: int, est_cost: float = 0.0,
+          act_cost: float = 0.0) -> None:
     bucket["input"] += inp
     bucket["cached"] += cach_read
     bucket["cache_write"] += cach_write
@@ -87,6 +90,9 @@ def _bump(bucket: dict, inp: int, outp: int, cach_read: int, cach_write: int,
     bucket["output"] += outp + reason
     bucket["total"] += inp + outp + reason
     bucket["api_calls"] += calls
+    # Hermes prices every request itself (actual when the provider reports a
+    # cost, estimated from its price table otherwise). Prefer actual spend.
+    bucket["cost_usd"] += round((act_cost if act_cost else est_cost) or 0.0, 4)
 
 
 def hit_rate(bucket_or_totals: dict):
@@ -152,10 +158,10 @@ def collect(days: int = 30) -> dict:
 
     try:
         groups = 0
-        for day, provider, inp, outp, cach_read, cach_write, reason, calls in rows or []:
+        for day, provider, inp, outp, cach_read, cach_write, reason, calls, est, act in rows or []:
             prov = (provider or "").strip() or UNKNOWN_PROVIDER_LABEL
             args = (inp or 0, outp or 0, cach_read or 0, cach_write or 0,
-                    reason or 0, calls or 0)
+                    reason or 0, calls or 0, est or 0.0, act or 0.0)
             _bump(res["providers"].setdefault(prov, _bucket()), *args)
             _bump(res["daily"].setdefault(day or "", _bucket()), *args)
             _bump(res["totals"], *args)

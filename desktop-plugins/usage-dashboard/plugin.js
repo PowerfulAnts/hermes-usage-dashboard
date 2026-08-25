@@ -184,17 +184,26 @@ function TotalsSection({ totals, days }) {
   const t = totals || {};
   const hit = t.hit_rate_pct;
   const prompt = Number(t.input) + Number(t.cached) + Number(t.cache_write);
+  const cost = money(t.cost_usd);
   return jsxs('section', {
     className: 'flex flex-col gap-3',
     children: [
       jsx(SectionHeading, { children: 'Tokens used inside Hermes' }),
       jsxs('div', {
-        className: 'grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4',
+        className: 'grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5',
         children: [
           Card({ children: [
             jsx(Caption, { children: 'Total · last ' + days + 'd' }),
             jsx('div', { className: 'text-3xl font-semibold tabular-nums tracking-tight', children: fmt(t.total) }),
             jsx('div', { className: 'text-xs text-(--ui-text-tertiary)', children: fmt(t.api_calls) + ' API calls' })
+          ] }),
+          Card({ children: [
+            jsx(Caption, { children: 'Cost (Hermes-priced)' }),
+            jsx('div', { className: 'text-2xl font-semibold tabular-nums tracking-tight', children: cost || '$0.00' }),
+            jsx('div', {
+              className: 'text-xs text-(--ui-text-tertiary)',
+              children: 'provider-reported where available, otherwise estimated from token prices'
+            })
           ] }),
           Card({ children: [
             jsx(Caption, { children: 'Input' }),
@@ -230,7 +239,7 @@ function TotalsSection({ totals, days }) {
 
 function DailyActivitySection({ daily }) {
   const rows = Object.entries(daily || {})
-    .map(([day, d]) => ({ day, tokens: Number(d.total) || 0, cached: Number(d.cached) || 0 }))
+    .map(([day, d]) => ({ day, tokens: Number(d.total) || 0, cached: Number(d.cached) || 0, cost: Number(d.cost_usd) || 0 }))
     .sort((a, b) => a.day.localeCompare(b.day))
     .slice(-14);
   const max = rows.reduce((m, row) => Math.max(m, row.tokens), 0);
@@ -250,7 +259,7 @@ function DailyActivitySection({ daily }) {
                 const isToday = row.day === today;
                 return jsxs('div', {
                   className: 'flex min-w-0 flex-1 flex-col items-center gap-1.5',
-                  title: dayLabel(row.day) + ' · ' + fmt(row.tokens) + ' tokens · ' + fmt(row.cached) + ' cached',
+                  title: dayLabel(row.day) + ' · ' + fmt(row.tokens) + ' tokens · ' + fmt(row.cached) + ' cached · ' + (money(row.cost) || '$0.00'),
                   children: [
                     jsx('div', { className: 'flex h-24 w-full items-end justify-center', children:
                       jsx('div', {
@@ -297,7 +306,8 @@ function ProviderCard({ name, bucket, grandTotal }) {
         Metric({ label: 'In', value: fmt(b.input) }),
         Metric({ label: 'Out', value: fmt(b.output) }),
         Metric({ label: 'Cached', value: fmt(b.cached) }),
-        Metric({ label: 'Cache write', value: fmt(b.cache_write) })
+        Metric({ label: 'Cache write', value: fmt(b.cache_write) }),
+        Metric({ label: 'Cost', value: money(b.cost_usd) || '$0.00', detail: b.cost_usd > 0 ? undefined : 'no billable spend recorded' })
       ] }),
       jsxs('div', { className: 'flex items-center gap-3 border-t border-(--ui-stroke-secondary) pt-2.5', children: [
         jsxs('div', { className: 'w-24 shrink-0', children: [

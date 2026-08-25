@@ -5,6 +5,11 @@ They are agent-to-agent notes, not human instructions.
 
 ## What this is (scope changed 2026-08-25, user request)
 
+COST SEMANTICS: cost_usd comes from the same session_model_usage rows
+(actual_cost_usd preferred, else estimated_cost_usd). Hermes prices every
+request itself, so costs work for ANY billing_provider value with no
+per-provider code. Do not add provider-specific cost lookups here.
+
 A **Hermes-only** token usage page inside the Hermes desktop app. It shows
 ONLY tokens used directly inside Hermes (its own `session_model_usage`
 sqlite store) — external CLI tools (Codex CLI rollouts, Gemini CLI chats,

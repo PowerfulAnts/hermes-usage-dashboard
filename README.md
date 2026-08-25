@@ -11,6 +11,7 @@ Token totals read only Hermes' own request log (`state.db` → `session_model_us
 ## Features
 
 - **In / Out / Cached / Cache-write tokens per provider** for any window (7 / 30 / 90 days).
+- **Cost per provider and in total**, using the spend Hermes itself prices into `session_model_usage` (provider-reported when available, token-price estimates otherwise). Works for every provider automatically — including ones this plugin has never heard of, because grouping is by whatever `billing_provider` Hermes recorded.
 - **Cache hit rate per provider** = `cached ÷ (in + cached + cache-written)`.
 - **Total cache hit rate** across all providers in the same window.
 - **Daily activity bars** and rich per-provider cards with usage-share, input/output mix and cache-hit bars.
