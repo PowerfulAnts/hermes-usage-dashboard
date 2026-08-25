@@ -1,9 +1,9 @@
 {
   "name": "usage-dashboard",
   "label": "Usage",
-  "description": "Hermes token usage tracker: in/out/cached tokens and cache hit rates per provider for everything that ran inside Hermes",
+  "description": "Hermes-only token usage with cache hit rates, visual provider bars, account limits, credits and funds",
   "icon": "Puzzle",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "tab": {
     "path": "/usage-dashboard",
     "position": "end",

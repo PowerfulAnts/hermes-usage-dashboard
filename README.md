@@ -1,21 +1,23 @@
 # hermes-usage-dashboard
 
-A plugin page for the [Hermes](https://hermes-agent.nousresearch.com/docs) desktop app that shows the **token usage of everything that ran inside Hermes itself** — input, output, cached and cache-write tokens per billing provider (Nous, OpenRouter, OpenAI Codex, Command Code, custom endpoints, …), each provider's **cache hit rate**, and a **total cache hit rate** across all of them.
+A plugin page for the [Hermes](https://hermes-agent.nousresearch.com/docs) desktop app that shows the **token usage of everything that ran inside Hermes itself** — input, output, cached and cache-write tokens per billing provider (Nous, OpenRouter, OpenAI Codex, Command Code, custom endpoints, …), each provider's **cache hit rate**, and a **total cache hit rate** across all of them. Daily and per-provider usage use visual bars, while independently trackable **usage limits, credits and funds** remain visible.
 
-It reads only Hermes' own request log (`state.db` → `session_model_usage`, which Hermes writes anyway). There is no telemetry, no network calls, no account.
+Token totals read only Hermes' own request log (`state.db` → `session_model_usage`, which Hermes writes anyway). There is no telemetry or separate account; optional account-status calls use the provider credentials already configured locally and are cached for five minutes.
 
-> **Scope note (v3):** earlier releases scanned every local AI CLI on the machine (Codex CLI rollouts, Gemini CLI chats, …). That universal-tracker version was fully replaced: this dashboard is now scoped to tokens used directly inside Hermes. The old adapter registry is gone; recover it from git history if you ever want it back.
+> **Scope note (v3):** token totals are scoped to requests made directly inside Hermes. The dashboard may read provider account-status metadata (Codex windows, Command Code credits, OpenRouter key limits, Nous Portal funds), but those sources never contribute tokens.
 
-<!-- screenshot: Usage page with totals row incl. total cache hit rate + per-provider table -->
+<!-- screenshot: Usage page with totals, daily bars, provider cards, limits and funds -->
 
 ## Features
 
 - **In / Out / Cached / Cache-write tokens per provider** for any window (7 / 30 / 90 days).
 - **Cache hit rate per provider** = `cached ÷ (in + cached + cache-written)`.
 - **Total cache hit rate** across all providers in the same window.
-- Providers that never report cache metadata show `—` (unknown), never a fake `0%`.
-- Fresh on every open: the sqlite aggregate is milliseconds-cheap, so there is no cache layer and no background scanning.
-- Zero recurring network calls — reads only local data Hermes already wrote.
+- **Daily activity bars** and rich per-provider cards with usage-share, input/output mix and cache-hit bars.
+- **Usage limits, credits and funds** for OpenAI Codex, Command Code Go, OpenRouter and Nous Portal when those providers expose them.
+- Every provider with prompt tokens shows a numeric cache hit rate; no hits is `0.0%` with an empty bar.
+- Token totals are fresh on every open: the sqlite aggregate is milliseconds-cheap, so there is no token cache layer or background scanning.
+- Network-backed account status is cached for five minutes; the 20-second token refresh does not repeatedly hit provider APIs.
 - Renders whatever providers actually have usage in the window; nothing is hardcoded in the UI.
 
 ## How cache math works
