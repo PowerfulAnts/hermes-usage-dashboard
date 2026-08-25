@@ -4,7 +4,7 @@
 # Copies:
 #   dashboard/plugin_api.py   -> <hermes>/plugins/usage-dashboard/dashboard/plugin_api.py
 #   dashboard/manifest.json   -> <hermes>/plugins/usage-dashboard/dashboard/manifest.json
-#   backend/  (recursively)   -> <hermes>/plugins/usage-dashboard/dashboard/backend/
+#   dashboard/sources.py      -> <hermes>/plugins/usage-dashboard/dashboard/sources.py
 #   desktop-plugins/usage-dashboard/plugin.js
 #                             -> <hermes>/desktop-plugins/usage-dashboard/plugin.js
 #
@@ -64,16 +64,18 @@ fi
 step "Hermes dir: $HERMES_DIR"
 
 PLUGIN_ROOT="$HERMES_DIR/plugins/usage-dashboard/dashboard"
-BACKEND_DEST="$PLUGIN_ROOT/backend"
 DESKTOP_DEST="$HERMES_DIR/desktop-plugins/usage-dashboard"
+# A previous universal-tracker install may have left a backend/ tree behind;
+# remove it so dead adapters cannot shadow the current single-module backend.
+LEGACY_BACKEND_DEST="$PLUGIN_ROOT/backend"
 
 # ------------------------------------------------------------- source manifest
 SRC_PLUGIN_API="$REPO_ROOT/dashboard/plugin_api.py"
 SRC_MANIFEST="$REPO_ROOT/dashboard/manifest.json"
+SRC_SOURCES="$REPO_ROOT/dashboard/sources.py"
 SRC_DESKTOP_JS="$REPO_ROOT/desktop-plugins/usage-dashboard/plugin.js"
-SRC_BACKEND="$REPO_ROOT/backend"
 
-for f in "$SRC_PLUGIN_API" "$SRC_MANIFEST" "$SRC_DESKTOP_JS" "$SRC_BACKEND/sources.py"; do
+for f in "$SRC_PLUGIN_API" "$SRC_MANIFEST" "$SRC_SOURCES" "$SRC_DESKTOP_JS"; do
     [ -e "$f" ] || die "repo source missing: $f" 2
 done
 
@@ -89,33 +91,27 @@ copy_one() { # src dst_dir
 step "Copying plugin files"
 copy_one "$SRC_PLUGIN_API" "$PLUGIN_ROOT"
 copy_one "$SRC_MANIFEST"   "$PLUGIN_ROOT"
+copy_one "$SRC_SOURCES"    "$PLUGIN_ROOT"
 copy_one "$SRC_DESKTOP_JS" "$DESKTOP_DEST"
-
-if [ "$DRY_RUN" = "1" ]; then
-    echo "  [dry-run] $SRC_BACKEND -> $BACKEND_DEST (recursive)"
-else
-    rm -rf "$BACKEND_DEST" || die "cannot clear old backend at $BACKEND_DEST" 3
-    mkdir -p "$(dirname "$BACKEND_DEST")" || die "cannot create $(dirname "$BACKEND_DEST")" 3
-    # Copy tree, then strip __pycache__ dirs from the destination only.
-    cp -R "$SRC_BACKEND" "$BACKEND_DEST" || die "recursive backend copy failed" 3
-    find "$BACKEND_DEST" -type d -name "__pycache__" -prune -exec rm -rf {} +
-fi
 
 if [ "$DRY_RUN" = "1" ]; then
     step "Dry run complete — nothing was written."
     exit 0
 fi
 
+# Remove legacy adapter tree from earlier plugin versions (v2.x), if present.
+if [ -d "$LEGACY_BACKEND_DEST" ]; then
+    rm -rf "$LEGACY_BACKEND_DEST" || die "cannot remove legacy backend at $LEGACY_BACKEND_DEST" 3
+    warn "Removed legacy backend/ tree from a previous install"
+fi
+
 # ------------------------------------------------------------ post-copy verify
 step "Verifying installed files"
 FAILED=0
 for f in "$PLUGIN_ROOT/manifest.json" "$PLUGIN_ROOT/plugin_api.py" \
-         "$BACKEND_DEST/sources.py" "$DESKTOP_DEST/plugin.js"; do
+         "$PLUGIN_ROOT/sources.py" "$DESKTOP_DEST/plugin.js"; do
     if [ -e "$f" ]; then ok "$(basename "$f")"; else warn "MISSING $f"; FAILED=1; fi
 done
-ADAPTERS=$(find "$BACKEND_DEST/adapters" -maxdepth 1 -name '*.py' ! -name '__*' 2>/dev/null | wc -l | tr -d ' ')
-if [ "${ADAPTERS:-0}" -gt 0 ]; then ok "adapters: $ADAPTERS adapter module(s)"
-else warn "MISSING adapters (count = 0)"; FAILED=1; fi
 
 # Best-effort byte-compile of the installed backend (skipped if no python).
 PYBIN=""
@@ -123,7 +119,7 @@ command -v python3 >/dev/null 2>&1 && PYBIN="python3"
 [ -z "$PYBIN" ] && command -v python >/dev/null 2>&1 && PYBIN="python"
 if [ -n "$PYBIN" ]; then
     step "Byte-compiling installed backend"
-    if "$PYBIN" -m compileall -q "$BACKEND_DEST" >/dev/null 2>&1; then
+    if "$PYBIN" -m compileall -q "$PLUGIN_ROOT" >/dev/null 2>&1; then
         ok "compiled cleanly"
     else
         warn "compileall reported issues (best-effort check, continuing)"

@@ -3,7 +3,7 @@
 # Copies:
 #   dashboard/plugin_api.py            -> <hermes>/plugins/usage-dashboard/dashboard/plugin_api.py
 #   dashboard/manifest.json            -> <hermes>/plugins/usage-dashboard/dashboard/manifest.json
-#   backend/  (recursively)            -> <hermes>/plugins/usage-dashboard/dashboard/backend/
+#   dashboard/sources.py               -> <hermes>/plugins/usage-dashboard/dashboard/sources.py
 #   desktop-plugins/usage-dashboard/plugin.js
 #                                      -> <hermes>/desktop-plugins/usage-dashboard/plugin.js
 #
@@ -47,23 +47,22 @@ Write-Step "Hermes dir: $HermesDir"
 # ------------------------------------------------------------- source manifest
 # repo-relative source -> destination relative to $HermesDir
 $pluginRoot   = Join-Path $HermesDir "plugins\usage-dashboard\dashboard"
-$backendDest  = Join-Path $pluginRoot "backend"
 $desktopDest  = Join-Path $HermesDir "desktop-plugins\usage-dashboard"
 
 $sources = @(
     @{ Src = Join-Path $RepoRoot "dashboard\plugin_api.py"; DstDir = $pluginRoot },
     @{ Src = Join-Path $RepoRoot "dashboard\manifest.json"; DstDir = $pluginRoot },
+    @{ Src = Join-Path $RepoRoot "dashboard\sources.py";    DstDir = $pluginRoot },
     @{ Src = Join-Path $RepoRoot "desktop-plugins\usage-dashboard\plugin.js"; DstDir = $desktopDest }
 )
-$backendSrc = Join-Path $RepoRoot "backend"
+# A previous universal-tracker install may have left a backend/ tree behind;
+# remove it so dead adapters cannot shadow the current single-module backend.
+$legacyBackendDest = Join-Path $pluginRoot "backend"
 
 foreach ($s in $sources) {
     if (-not (Test-Path $s.Src)) {
         Die 2 "Source file missing in repo: $($s.Src)"
     }
-}
-if (-not (Test-Path (Join-Path $backendSrc "sources.py"))) {
-    Die 2 "Source folder incomplete: $backendSrc\sources.py not found."
 }
 
 # ---------------------------------------------------------------------- copy
@@ -82,24 +81,15 @@ function Copy-One($src, $dstDir) {
 Write-Step "Copying plugin files"
 foreach ($s in $sources) { Copy-One $s.Src $s.DstDir }
 
-# Backend tree: copy recursively, then strip any __pycache__ dirs that came along.
-if ($DryRun) {
-    Write-Host "  [dry-run] $backendSrc -> $backendDest (recursive)"
-} else {
-    if (Test-Path $backendDest) {
-        # Start clean so removed adapters do not linger from a previous install.
-        Remove-Item -LiteralPath $backendDest -Recurse -Force
-    }
-    New-Item -ItemType Directory -Path $backendDest -Force | Out-Null
-    Copy-Item -Path (Join-Path $backendSrc "*") -Destination $backendDest -Recurse -Force
-    Get-ChildItem -Path $backendDest -Recurse -Directory -Filter "__pycache__" |
-        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
-}
-Write-Ok "backend copied"
-
 if ($DryRun) {
     Write-Step "Dry run complete -- nothing was written."
     exit 0
+}
+
+# Remove legacy adapter tree from earlier plugin versions (v2.x), if present.
+if (Test-Path $legacyBackendDest) {
+    Remove-Item -LiteralPath $legacyBackendDest -Recurse -Force
+    Write-Warn2 "Removed legacy backend/ tree from a previous install"
 }
 
 # ------------------------------------------------------------ post-copy verify
@@ -107,7 +97,7 @@ Write-Step "Verifying installed files"
 $mustExist = @(
     (Join-Path $pluginRoot "manifest.json"),
     (Join-Path $pluginRoot "plugin_api.py"),
-    (Join-Path $backendDest "sources.py"),
+    (Join-Path $pluginRoot "sources.py"),
     (Join-Path $desktopDest "plugin.js")
 )
 $failed = $false
@@ -115,20 +105,13 @@ foreach ($f in $mustExist) {
     if (Test-Path $f) { Write-Ok (Split-Path $f -Leaf) }
     else              { Write-Warn2 "MISSING $f"; $failed = $true }
 }
-$adapterCount = @(Get-ChildItem -Path (Join-Path $backendDest "adapters") -Filter "*.py" -ErrorAction SilentlyContinue |
-                  Where-Object { $_.Name -notlike "__*" }).Count
-if ($adapterCount -gt 0) { Write-Ok "adapters: $adapterCount adapter module(s)" }
-else                     { Write-Warn2 "MISSING adapters (count = 0)"; $failed = $true }
 
 # Best-effort byte-compile of the installed backend (skipped if no python).
 $py = Get-Command python -ErrorAction SilentlyContinue
+if (-not $py) { $py = Get-Command py -ErrorAction SilentlyContinue }
 if ($py) {
     Write-Step "Byte-compiling installed backend (python -m compileall)"
-    & python -m compileall -q $backendDest 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) { Write-Ok "compiled cleanly" }
-    else { Write-Warn2 "compileall reported issues (best-effort check, continuing)" }
-} elseif (Get-Command py -ErrorAction SilentlyContinue) {
-    & py -m compileall -q $backendDest 2>&1 | Out-Null
+    & $py.Source -m compileall -q $pluginRoot 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { Write-Ok "compiled cleanly" }
     else { Write-Warn2 "compileall reported issues (best-effort check, continuing)" }
 } else {

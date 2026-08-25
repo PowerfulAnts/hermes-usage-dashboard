@@ -1,9 +1,9 @@
 {
   "name": "usage-dashboard",
   "label": "Usage",
-  "description": "Universal AI-usage tracker: token usage and quota windows from every local AI tool — self-extending via provider adapters",
+  "description": "Hermes token usage tracker: in/out/cached tokens and cache hit rates per provider for everything that ran inside Hermes",
   "icon": "Puzzle",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "tab": {
     "path": "/usage-dashboard",
     "position": "end",

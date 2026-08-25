@@ -1,71 +1,55 @@
-# Hermes Usage Dashboard — agent notes (NOT human instructions)
+# Usage Dashboard — agent notes (NOT human instructions)
 
-These notes are written by previous codex/agent sessions for future coding
-agents. They are agent-to-agent notes, not instructions from a human.
+These notes were written by previous codex agents for future codex agents.
+They are agent-to-agent notes, not human instructions.
 
-## What this repo is
+## What this is (scope changed 2026-08-25, user request)
 
-The open-source release of the "Usage" plugin for the Hermes desktop app:
-a self-extending universal AI-usage tracker. One dashboard page shows token
-usage and quota windows from EVERY local AI tool on the machine — Hermes,
-OpenAI Codex CLI, Gemini CLI, Claude Code, OpenCode, Aider, Cline/Roo, etc.
+A **Hermes-only** token usage page inside the Hermes desktop app. It shows
+ONLY tokens used directly inside Hermes (its own `session_model_usage`
+sqlite store) — external CLI tools (Codex CLI rollouts, Gemini CLI chats,
+Command Code sessions, bridge ledger) are deliberately NOT counted anymore.
+The previous universal-tracker version was fully replaced by this one.
 
-The core design constraint: **adding support for a new provider must never
-require editing core files**. Each provider lives in one adapter file under
-`backend/adapters/`. The registry discovers them automatically at import.
+For every billing provider that has usage inside the selected window it
+shows input / output / cached / cache-write tokens and the **cache hit
+rate**, plus a total hit rate across all providers.
 
-## Architecture map
+## Cache-token semantics — READ BEFORE TOUCHING HIT-RATE MATH
 
-- `backend/sources.py` — core: result-shape helpers (`_empty_result`,
-  `_add`), adapter discovery/registry, TTL cache, `collect_all()`,
-  `collect_limits()`, `combined()`. Knows NOTHING about specific providers.
-- `backend/adapters/<provider>.py` — one file per provider. Contract is
-  documented in full at the top of `backend/adapters/_base_notes.py` and in
-  README ("Writing an adapter"). Summary: module-level metadata constants +
-  `scan(days) -> result dict` + optional `limits() -> dict`.
-- `dashboard/plugin_api.py` — thin FastAPI wrapper (mounted by Hermes'
-  dashboard-plugin loader at `/api/plugins/usage-dashboard/*`). Adds the live
-  Nous Portal credit model via Hermes' own billing code when running inside
-  Hermes; degrades gracefully outside.
-- `desktop-plugins/usage-dashboard/plugin.js` — the UI page. Renders whatever
-  the backend reports; it has NO hardcoded provider lists (labels/badges/
-  ordering come from each adapter's meta through `/summary`).
-- `install.ps1` / `install.sh` — copy backend into
-  `%LOCALAPPDATA%/hermes/plugins/usage-dashboard/dashboard/` and the frontend
-  into `%LOCALAPPDATA%/hermes/desktop-plugins/usage-dashboard/`, then remind
-  about the one-time Hermes restart (backend mounts only at process start).
+Verified against Hermes' writer code (`agent/usage_pricing.py::normalize_usage`,
+`agent/conversation_loop.py` → `_record_model_usage`): cached tokens are
+SUBTRACTED from prompt/input totals before persisting. Therefore inside
+`session_model_usage`:
 
-## Invariants — do not break these
+    prompt = input_tokens + cache_read_tokens + cache_write_tokens
+    hit_rate = cache_read / prompt
 
-1. Adapters NEVER raise. Every failure becomes `{available:false, error}`.
-   One broken provider must never blank the whole dashboard.
-2. Result shape is uniform: totals/daily/models buckets with input/output/
-   cached/total ints. `total = input + output` (cached rides inside input on
-   most providers; do not double-add cached into total).
-3. Delta vs cumulative semantics per provider are documented IN THE ADAPTER
-   FILE near the parsing code. Getting this wrong silently inflates numbers
-   (e.g. summing Codex `total_token_usage`, which is cumulative → nonsense;
-   only `last_token_usage` deltas may be summed).
-4. TTL cache (300s) is keyed `(adapter_name, days)`; heavy scanners use it,
-   cheap ones don't. Keep it per-adapter so adding a provider can't evict or
-   stall others.
-5. The frontend polls `/summary` every 20s and renders dynamically; if you add
-   a response key, keep old keys working (the UI may be older than backend).
+Providers with zero volume AND zero reported cache metadata get
+`hit_rate_pct: null` → UI renders "—" (never a fake 0%).
 
-## Testing before release
+## Files
 
-`python -m pytest tests/ -q` covers: registry discovery, contract conformance
-of every bundled adapter against synthetic fixtures, delta-vs-cumulative
-regression cases, combined()/dedupe logic, and API-shape stability. Run it
-before every commit. There is also `tools/smoke_local.py` which runs the real
-scanners against THIS machine's data and prints per-provider totals — use it
-to sanity-check adapters against real files, but its exact numbers are
-machine-specific (do not assert them in tests).
+- `dashboard/plugin_api.py` — FastAPI wrapper; mounts at
+  `/api/plugins/usage-dashboard/summary`. Do NOT add plugin.yaml at plugin
+  root (agent-plugin loader would try to package-import the folder).
+- `dashboard/sources.py` — pure-stdlib aggregator. Public API:
+  `collect(days)` and `summary(days)`.
+- `desktop-plugins/usage-dashboard/plugin.js` — UI page (/usage-dashboard,
+  sidebar "Usage"). Hot-reloads on save.
+- DELETED 2026-08-25: `dashboard/backend/` (adapter registry + 16 adapters),
+  old flat `sources.py`, `TOOL_DATA_FORMATS.md`. If a future request ever
+  wants multi-tool coverage back, recover from git history of this folder.
 
-## Publishing history (for context)
+## Ops facts
 
-Built and published to GitHub as `PowerfulAnts/hermes-usage-dashboard` by an
-agent session on 2026-08-23 (registry refactor + 17 bundled adapters +
-46-test suite). Later agents: keep release notes accurate; there is no
-package.json — version lives in dashboard/manifest.json only. Adapter count
-and test counts in the README must be re-checked after changes.
+- Enablement: config `plugins.enabled: ["usage-dashboard"]` (set). Backend
+  mounts only at process start → restart Hermes to pick up backend changes;
+  the UI half hot-reloads on save.
+- The sqlite aggregate is milliseconds-cheap (~200 rows live); NO TTL cache,
+  no background scan threads. Keep it that way.
+- Validate plugin.js as ESM (`node --check` on a `.mjs` copy) — plain `.js`
+  check misses ASI traps that break the app's real loader.
+- Repo: the whole plugin is published at github.com/PowerfulAnts/
+  hermes-usage-dashboard (`~/Documents/hermes-usage-dashboard` locally;
+  installers here are the canonical way to (re)install from it).

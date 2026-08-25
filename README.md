@@ -1,47 +1,33 @@
 # hermes-usage-dashboard
 
-A plugin page for the [Hermes](https://hermes-agent.nousresearch.com/docs) desktop app that shows token usage and quota windows from **every** local AI CLI/IDE tool on your machine in one dashboard — Hermes, OpenAI Codex CLI, Gemini CLI, Command Code, Claude Code and more. It reads only files those tools already wrote to disk; there is no telemetry and no account of its own.
+A plugin page for the [Hermes](https://hermes-agent.nousresearch.com/docs) desktop app that shows the **token usage of everything that ran inside Hermes itself** — input, output, cached and cache-write tokens per billing provider (Nous, OpenRouter, OpenAI Codex, Command Code, custom endpoints, …), each provider's **cache hit rate**, and a **total cache hit rate** across all of them.
 
-<!-- screenshot: Usage page with per-provider cards, combined totals, daily chart and limit cards -->
+It reads only Hermes' own request log (`state.db` → `session_model_usage`, which Hermes writes anyway). There is no telemetry, no network calls, no account.
+
+> **Scope note (v3):** earlier releases scanned every local AI CLI on the machine (Codex CLI rollouts, Gemini CLI chats, …). That universal-tracker version was fully replaced: this dashboard is now scoped to tokens used directly inside Hermes. The old adapter registry is gone; recover it from git history if you ever want it back.
+
+<!-- screenshot: Usage page with totals row incl. total cache hit rate + per-provider table -->
 
 ## Features
 
-- **Universal tracking** across AI CLIs and IDEs — one page instead of one status bar per tool.
-- **Self-extending adapter registry**: adding a provider is dropping a single `.py` file into `backend/adapters/`. No core file is ever edited; discovery is automatic.
-- **Zero recurring network calls**, except optional live quota probes you explicitly enable (`limits()` adapters). Everything else reads local files.
-- **5-minute TTL cache** per adapter, so heavy transcript scanners don't re-run on every UI poll.
-- **Per-provider cards**, **combined totals**, and a **daily chart** rendered from whatever the backend reports — the frontend has no hardcoded provider list.
-- **Quota-window limit cards** with amber warnings as windows fill up.
-- **Nous Portal credits** are shown when the plugin runs inside Hermes, via Hermes' own billing model.
+- **In / Out / Cached / Cache-write tokens per provider** for any window (7 / 30 / 90 days).
+- **Cache hit rate per provider** = `cached ÷ (in + cached + cache-written)`.
+- **Total cache hit rate** across all providers in the same window.
+- Providers that never report cache metadata show `—` (unknown), never a fake `0%`.
+- Fresh on every open: the sqlite aggregate is milliseconds-cheap, so there is no cache layer and no background scanning.
+- Zero recurring network calls — reads only local data Hermes already wrote.
+- Renders whatever providers actually have usage in the window; nothing is hardcoded in the UI.
 
-## Supported providers
+## How cache math works
 
-Bundled adapters (all verified on Windows unless noted):
+Hermes normalizes API usage before persisting it: cached tokens are subtracted from prompt/input totals, so inside `session_model_usage`
 
-| Adapter | Reads | Data location |
-|---|---|---|
-| `hermes` | Hermes' own sqlite session store (`session_model_usage`, aggregated per day/model/provider) | `%LOCALAPPDATA%\hermes\state.db` (`~/.hermes/state.db` elsewhere) |
-| `codex` | OpenAI Codex CLI rollout transcripts (sums `last_token_usage` deltas; cumulative counters never summed); plus live rate-limit windows via snapshots Codex writes into rollouts | `~/.codex/sessions/**`, `archived_sessions/*.jsonl` |
-| `gemini` | Gemini CLI chat transcripts incl. subagent session subdirectories | `~/.gemini/tmp/*/chats/**` |
-| `commandcode` | Command Code transcripts; live billing limits via its API using the key from `commandcode login` | `~/.commandcode/projects/**/*.jsonl` (+ `auth.json`) |
-| `claudecode` | Claude Code transcripts deduped per API message id (streamed turns repeat usage), incl. subagent transcripts; input is undercounted upstream (~placeholder values) | `~/.claude/projects/**/*.jsonl` |
-| `cline` / `roo` | Cline / Roo Code VS Code task histories (`api_req_started` events, exact per-request deltas) | VS Code `globalStorage/…/tasks/<id>/ui_messages.json` |
-| `opencode` | OpenCode SQLite store — full token breakdown incl. reasoning + cache | `~/.local/share/opencode/opencode.db` |
-| `aider` | Aider's opt-in analytics log (`--analytics-log`); absent unless enabled | `~/.aider/analytics.jsonl` |
-| `zed` | Zed threads DB — authoritative cumulative totals. Current builds store zstd blobs the stdlib cannot decompress, so only legacy `json` rows count (skipped rows reported honestly) | `%LOCALAPPDATA%\Zed\threads\threads.db` (per-OS paths in adapter) |
-| `crush` | Per-project Crush DBs — cumulative per-session totals, dominant-model attribution | registry `projects.json` → `<project>/.crush/crush.db` |
-| `amp` | Amp local thread mirrors (undocumented format, guarded) | `~/.local/share/amp/threads/T-*.json` |
-| `copilotcli` | Copilot CLI session-store usage events (stored input is cache-inclusive — uncached remainder emitted) | `~/.copilot/session-store.db` |
-| `antigravity` | Google Antigravity transcripts — currently reports unavailable with evidence: steps carry no token counts | `~/.gemini/antigravity*/…` |
-| `ollama` | Reports unavailable by design: Ollama persists no attributable usage history | `~/.ollama/logs` (diagnostics only) |
-| `zai` | Z.ai GLM Coding Plan quota windows only (token scan would double-count CLI transcripts) | live API via locally stored key |
-| `ledger` | Bridge JSONL for live monitoring; deduplicated against Codex data in combined totals | `~/.hermes/usage-ledger.jsonl` |
+```
+prompt tokens = input_tokens + cache_read_tokens + cache_write_tokens
+cache hit rate = cache_read_tokens ÷ prompt tokens
+```
 
-Adapters that only expose quota windows (`limits()`) or honest
-unavailability still show up as muted cards with their reasons. More ship in
-`backend/adapters/` over time, and community PRs are welcome — see the
-research notes in `_contract.py` comments and each adapter's docstring for
-the exact on-disk formats.
+The backend computes hit rates; the UI only renders them (`hit_rate_pct: null` → `—`).
 
 ## Install (Hermes users)
 
@@ -55,107 +41,61 @@ cd hermes-usage-dashboard
 
 Then **restart Hermes once** (the plugin backend mounts at process start), and open **Usage** in the sidebar.
 
-Manual alternative: copy `backend/` to `<hermes-data>/plugins/usage-dashboard/dashboard/` and the frontend to `<hermes-data>/desktop-plugins/usage-dashboard/` yourself, then restart Hermes. On Windows `<hermes-data>` is `%LOCALAPPDATA%/hermes`.
+Manual alternative: copy `dashboard/plugin_api.py`, `dashboard/manifest.json` and `dashboard/sources.py` to `<hermes-data>/plugins/usage-dashboard/dashboard/` and the frontend to `<hermes-data>/desktop-plugins/usage-dashboard/` yourself, then restart Hermes. On Windows `<hermes-data>` is `%LOCALAPPDATA%/hermes`; elsewhere `~/.local/share/hermes` or `~/Library/Application Support/hermes`.
 
-## Adding a provider
+Upgrading from v2.x? The installer removes the old `backend/` adapter tree automatically; just run it again and restart Hermes.
 
-Each provider lives in exactly one file under `backend/adapters/<provider>.py`; copy `_contract.py` to start. The contract:
+## Uninstall
 
-**Metadata constants**
+- Windows: `powershell -File uninstall.ps1`
+- macOS / Linux: `./uninstall.sh`
 
-| Constant | Meaning |
+## Repository layout
+
+| Path | What it is |
 |---|---|
-| `NAME` | unique id, also used as cache key |
-| `LABEL` | display name in the UI |
-| `BADGE` | optional short chip text |
-| `HOMEPAGE` | optional project URL |
-| `ORDER` | optional sort weight (lower = earlier card) |
-| `DEDUPE_GROUP` | optional group id when two adapters report overlapping traffic |
-| `COMBINED_PRIORITY` | within a `DEDUPE_GROUP`, the lower value wins for combined totals |
+| `dashboard/plugin_api.py` | FastAPI router mounted at `/api/plugins/usage-dashboard/*` |
+| `dashboard/sources.py` | Pure-stdlib aggregation over `session_model_usage` (single source of all numbers) |
+| `dashboard/manifest.json` | Dashboard-plugin manifest consumed by Hermes |
+| `desktop-plugins/usage-dashboard/plugin.js` | The UI page (sidebar "Usage", route `/usage-dashboard`) |
+| `install.ps1` / `install.sh` | Installers (auto-detect the Hermes dir; `-DryRun` supported) |
+| `uninstall.ps1` / `uninstall.sh` | Safe uninstalls (only remove folders whose manifest says `usage-dashboard`) |
+| `tools/smoke_local.py` | Print your own usage table from the terminal |
+| `tools/verify_install.ps1` | Post-install verification |
 
-**Functions**
+## API contract
 
-- `scan(days: int = 30) -> dict` — required. Returns the uniform result shape (`totals` / `daily` / `models` buckets with `input`, `output`, `cached`, `total` ints; `total = input + output`).
-- `limits() -> dict` — optional. Quota-window snapshot rendered as limit cards.
+`GET /api/plugins/usage-dashboard/summary?days=N` (N: 1–365) →
 
-**Rules**
-
-- **Never raise.** Return `{"available": False, "error": "..."}` when data is missing; guard every field access.
-- Use the helpers in `_util.py`: `home()`, `recent_files()`, `iter_lines()`, `load_json()`, `cutoff_day()`, `http_get_json()`, …
-- Document delta-vs-cumulative semantics right where you parse them — summing a cumulative counter silently inflates numbers.
-- Tests redirect the home directory via the `USAGE_DASH_HOME` env var to synthetic fixtures, so never hardcode absolute paths.
-
-Minimal adapter:
-
-```python
-NAME = "mycli"
-LABEL = "My CLI"
-BADGE = "CLI"
-ORDER = 60
-
-def scan(days: int = 30) -> dict:
-    res = sources.empty_result(days)
-    root = os.path.join(home(), ".mycli", "sessions")
-    if not os.path.isdir(root):
-        res["error"] = f"no dir {root}"
-        return res
-    for path in recent_files([os.path.join(root, "**", "*.jsonl")], days):
-        for line in iter_lines(path, ('"usage"',)):
-            o = load_json(line)
-            if not o:
-                continue
-            u = o.get("usage") or {}
-            sources.add(res["daily"], res["models"], res["totals"],
-                        day_of(o.get("ts")), o.get("model", "?"),
-                        int(u.get("inputTokens", 0)),
-                        int(u.get("outputTokens", 0)))
-    res["available"] = res["totals"]["total"] > 0
-    return res
+```jsonc
+{
+  "available": true,
+  "days": 30,
+  "generated_at": "2026-08-25T06:16:59+00:00",
+  "totals": {                       // same bucket shape as every provider
+    "input": 88644315,              // excludes cached tokens
+    "output": 2998132,              // includes reasoning tokens
+    "cached": 840256960,            // cache READ hits
+    "cache_write": 0,
+    "total": 91642447,              // input + output (+ reasoning already inside output)
+    "api_calls": 6223,
+    "hit_rate_pct": 90.5            // TOTAL cache hit rate; null = unknown
+  },
+  "daily":   { "2026-08-25": { "...same bucket...": {} } },
+  "providers": {
+    "nous":        { "...bucket...", "hit_rate_pct": 95.3 },
+    "openrouter":  { "...bucket...", "hit_rate_pct": 96.8 },
+    "command-code-go": { "...bucket...", "hit_rate_pct": null }   // never reports cache → "—"
+  }
+}
 ```
 
-The registry picks new adapters up automatically on the next `/summary` request — no restart needed.
+## Development notes
 
-## Privacy
-
-Everything stays local. Adapters read files that your AI tools already wrote on this machine; nothing is uploaded anywhere by this plugin. The only outbound requests possible are from `limits()` implementations calling their vendor's quota/billing API — and only with credentials you configured yourself (e.g. `commandcode login`). There is no telemetry.
-
-## Development
-
-Run the test suite against synthetic fixtures:
-
-```bash
-python -m pytest tests/ -q
-```
-
-Smoke-test against *this machine's* real data (numbers are machine-specific; don't assert them):
-
-```bash
-python tools/smoke_local.py
-```
-
-Layout:
-
-```
-hermes-usage-dashboard/
-├── AGENT_NOTES.md              # agent-to-agent notes, not user docs
-├── install.ps1                 # Windows installer
-├── install.sh                  # macOS/Linux installer
-├── backend/
-│   ├── sources.py              # core: registry, TTL cache, collect_all(), combined()
-│   ├── adapters/
-│   │   ├── _contract.py        # annotated adapter template
-│   │   ├── _util.py            # shared helpers (home(), iter_lines(), ...)
-│   │   └── <provider>.py       # one file per provider
-│   └── ...
-├── dashboard/
-│   ├── manifest.json           # Hermes plugin manifest
-│   └── plugin_api.py           # FastAPI wrapper mounted by Hermes
-├── desktop-plugins/
-│   └── usage-dashboard/plugin.js   # the Usage UI page
-├── tests/                      # fixtures + contract/regression tests
-└── tools/smoke_local.py        # run real scanners against this machine
-```
+- The backend is deliberately one pure-stdlib module with no cache layer; the grouped SUM over `session_model_usage` costs single-digit milliseconds at realistic sizes.
+- `AGENT_NOTES.md` carries agent-to-agent engineering notes (cache-token semantics, ops facts); it is not user documentation.
+- Windows quirk: a running Hermes backend can hold the sqlite write-lock — `sources.py` opens read-only first and falls back to copying `state.db` (+WAL) to a temp file.
 
 ## License
 
-[MIT](LICENSE) © 2026 Lone Traveller Studios
+MIT — see [LICENSE](LICENSE).
